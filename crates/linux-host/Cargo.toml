@@ -1,0 +1,18 @@
+[package]
+name = "remote-linux-host"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Wayland host backend for remote-desktop"
+
+[lib]
+name = "remote_linux_host"
+path = "src/lib.rs"
+
+[dependencies]
+remote-protocol = { path = "../protocol" }
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+xkbcommon = "0.9"
+serde_json = "1"

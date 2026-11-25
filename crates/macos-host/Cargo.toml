@@ -1,0 +1,15 @@
+[package]
+name = "remote-macos-host"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "macOS capture, input, and clipboard host backend for remote-desktop"
+
+[lib]
+name = "remote_macos_host"
+path = "src/lib.rs"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+arboard = "3.7"
+enigo = "0.6"
+remote-protocol = { path = "../protocol" }

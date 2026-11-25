@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Mini Remote">
+  <defs>
+    <linearGradient id="ground" x2="1" y2="1">
+      <stop stop-color="#144541"/>
+      <stop offset="1" stop-color="#101b2c"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#ground)" d="M0 0h1024v1024H0z"/>
+  <rect x="156" y="211" width="618" height="461" rx="78" fill="none" stroke="#ddfff8" stroke-width="42"/>
+  <path d="M401 672v82m-110 0h310" fill="none" stroke="#ddfff8" stroke-width="42" stroke-linecap="round"/>
+  <path d="m329 377 80 64-80 64m133-1h99" fill="none" stroke="#74f4d3" stroke-width="39" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="654" y="469" width="213" height="344" rx="54" fill="#1a343b" stroke="#89ffe0" stroke-width="35"/>
+  <path d="M725 543h71m-52 197h34" fill="none" stroke="#89ffe0" stroke-width="24" stroke-linecap="round"/>
+</svg>

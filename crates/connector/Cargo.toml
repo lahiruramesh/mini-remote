@@ -1,0 +1,18 @@
+[package]
+name = "remote-connector"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+rand = "0.8"
+remote-protocol = { path = "../protocol" }
+serde_json = "1"
+subtle = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+remote-linux-host = { path = "../linux-host" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+remote-macos-host = { path = "../macos-host" }
