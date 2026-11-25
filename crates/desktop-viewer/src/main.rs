@@ -259,6 +259,7 @@ impl Viewer {
                         clipboard,
                         profile,
                         phone_workspace: false,
+                        viewport: None,
                     },
                 ) {
                     let _ = writer_events

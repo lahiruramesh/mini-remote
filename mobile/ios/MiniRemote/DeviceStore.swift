@@ -1,7 +1,6 @@
 import Foundation
 import Security
 import SwiftUI
-import UIKit
 
 enum MobileQuality: String, Codable, CaseIterable, Identifiable {
     case automatic
@@ -44,11 +43,6 @@ struct SavedDevice: Identifiable, Codable, Equatable {
     var host = ""
     var port: UInt16 = 47990
     var quality: MobileQuality = .automatic
-    var phoneWorkspace: Bool? = nil
-
-    @MainActor var usesPhoneWorkspace: Bool {
-        phoneWorkspace ?? (UIDevice.current.userInterfaceIdiom == .phone)
-    }
 }
 
 @MainActor

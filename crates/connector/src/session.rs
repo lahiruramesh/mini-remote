@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow};
 use remote_protocol::{
     ClientMessage, InputEvent, MAX_CLIPBOARD_TEXT, MAX_VIDEO_CHUNK, MouseButton, ServerMessage,
-    StreamProfile, VideoSource, WindowShortcut, diagnostics::Monitor, read_client, write_server,
-    write_video,
+    StreamProfile, VideoSource, VideoViewport, WindowShortcut, diagnostics::Monitor, read_client,
+    write_server, write_video,
 };
 
 use crate::{Host, pairing};
@@ -38,13 +38,14 @@ pub fn serve(
         deadline: Instant::now() + Duration::from_secs(4),
     };
     let first_message = read_client(&mut handshake).context("read authentication")?;
-    let (candidate, clipboard, profile, requested_workspace) = match first_message {
+    let (candidate, clipboard, profile, viewport) = match first_message {
         ClientMessage::Authenticate {
             token,
             clipboard,
             profile,
-            phone_workspace,
-        } => (token, clipboard, profile, phone_workspace),
+            viewport,
+            ..
+        } => (token, clipboard, profile, viewport),
         ClientMessage::RedeemInvite { code } => {
             if !pairing::consume_invite(token_path, token, &code) {
                 return reject(
@@ -73,23 +74,11 @@ pub fn serve(
     };
     socket.set_read_timeout(Some(Duration::from_secs(20)))?;
 
-    let workspace_host = if requested_workspace {
-        match Host::phone_workspace() {
-            Ok(host) => Some(host),
-            Err(error) => {
-                eprintln!("Phone workspace unavailable: {error}");
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let phone_workspace = workspace_host.is_some();
-    let mut host = match workspace_host.map_or_else(Host::new, Ok) {
+    let mut host = match Host::new() {
         Ok(host) => host,
         Err(error) => return reject(&mut socket, &format!("Desktop unavailable: {error}")),
     };
-    let source = match host.start_video(profile) {
+    let source = match host.start_video(profile, viewport) {
         Ok(source) => source,
         Err(error) => return reject(&mut socket, &format!("Screen capture unavailable: {error}")),
     };
@@ -101,7 +90,6 @@ pub fn serve(
         clipboard,
         source,
         profile,
-        phone_workspace,
     );
     let _ = socket.shutdown(Shutdown::Both);
     connected
@@ -133,13 +121,13 @@ fn run_session(
     clipboard_requested: bool,
     source: VideoSource,
     profile: StreamProfile,
-    phone_workspace: bool,
 ) -> Result<()> {
     let VideoSource {
         width,
         height,
         mut reader,
         stop,
+        viewport,
     } = source;
     let clones = socket
         .try_clone()
@@ -166,7 +154,8 @@ fn run_session(
                 height,
                 diagnostics: true,
                 profile,
-                phone_workspace,
+                phone_workspace: false,
+                viewport_axis: viewport.map(|view| view.axis),
             },
         )?;
         write_server(
@@ -209,6 +198,7 @@ fn run_session(
         let mut state = Control {
             clipboard_enabled,
             input_available,
+            viewport,
             ..Control::default()
         };
         let result = handle_events(host, &to_client, &event_rx, clipboard_allowed, &mut state);
@@ -281,6 +271,7 @@ struct Control {
     keys: Vec<String>,
     clipboard_enabled: bool,
     input_available: bool,
+    viewport: Option<VideoViewport>,
     clipboard: Option<String>,
     warned_about_input: bool,
     monitor: Option<Monitor>,
@@ -300,6 +291,10 @@ impl Control {
                 return Err(anyhow!("duplicate authentication"));
             }
             ClientMessage::Input(event) if self.input_available => {
+                let event = match (self.viewport, event) {
+                    (Some(view), InputEvent::PointerMove { x, y }) => view.map_pointer(x, y),
+                    (_, event) => event,
+                };
                 match host.input(event.clone()) {
                     Ok(()) => self.record_input(event),
                     Err(error) if !self.warned_about_input => {

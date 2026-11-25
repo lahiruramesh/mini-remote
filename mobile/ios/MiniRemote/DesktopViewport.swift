@@ -1,5 +1,22 @@
 import CoreGraphics
 
+enum ViewportAxis: String {
+    case none, horizontal, vertical
+}
+
+struct MobileViewport: Equatable {
+    let width: Int
+    let height: Int
+    var position = 50
+
+    init?(size: CGSize) {
+        guard size.width.isFinite, size.height.isFinite, size.width >= 2, size.height >= 2 else { return nil }
+        let scale = 1000 / max(size.width, size.height)
+        width = max(2, Int((size.width * scale).rounded()))
+        height = max(2, Int((size.height * scale).rounded()))
+    }
+}
+
 struct DesktopViewport {
     let container: CGSize
     let fitted: CGSize

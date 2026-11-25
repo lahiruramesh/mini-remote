@@ -43,11 +43,6 @@ struct ContentView: View {
                         RemoteDesktopScreen(
                             session: session,
                             device: device,
-                            onWorkspaceChange: { enabled in
-                                var updated = device
-                                updated.phoneWorkspace = enabled
-                                try? store.save(updated, token: nil)
-                            },
                             onDisconnect: {
                                 session.disconnect()
                                 navigationPath.removeAll()
@@ -581,14 +576,6 @@ private struct DeviceEditorSheet: View {
             .pickerStyle(.navigationLink)
         }
 
-        Section {
-            Toggle("Use Phone Workspace", isOn: Binding(
-                get: { device.usesPhoneWorkspace },
-                set: { device.phoneWorkspace = $0 }
-            ))
-        } footer: {
-            Text("Temporarily sets the host display to 1280 × 720. The original resolution returns when you disconnect.")
-        }
     }
 
     private func submit(connect: Bool) {
@@ -631,7 +618,6 @@ private struct DeviceEditorSheet: View {
 private struct RemoteDesktopScreen: View {
     @ObservedObject var session: RemoteSession
     let device: SavedDevice
-    let onWorkspaceChange: (Bool) -> Void
     let onDisconnect: () -> Void
 
     @State private var inputMode: RemoteInputMode = .direct
@@ -647,7 +633,6 @@ private struct RemoteDesktopScreen: View {
     @State private var trackpadCursor = CGPoint(x: 0.5, y: 0.5)
     @State private var pointerDown = false
     @State private var heldModifiers: Set<String> = []
-    @State private var confirmPhoneWorkspace = false
 
     var body: some View {
         let compact = verticalSizeClass == .compact
@@ -664,19 +649,22 @@ private struct RemoteDesktopScreen: View {
                         .background(Color(white: 0.16))
                 }
                 screenSurface
-                if session.phase == .streaming && DesktopViewport.isUltraWide(session.resolution) {
-                    if session.layoutNotice == nil {
-                        Button("Use Phone Workspace", systemImage: "iphone.landscape") {
-                            confirmPhoneWorkspace = true
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(Color(white: 0.09))
+                if session.phase == .streaming {
+                    if let axis = session.viewportAxis, axis != .none {
+                        viewportControls(axis)
+                    } else if DesktopViewport.isUltraWide(session.resolution) {
+                        desktopAreaBar
                     }
-                    desktopAreaBar
                 }
             }
             sessionControls(compact: compact)
+        }
+        .background {
+            GeometryReader { geometry in
+                Color.clear.onChange(of: geometry.size, initial: true) { _, size in
+                    session.configureViewport(size)
+                }
+            }
         }
         .background(Color.black.ignoresSafeArea())
         .environment(\.colorScheme, .dark)
@@ -700,11 +688,6 @@ private struct RemoteDesktopScreen: View {
         }
         .onChange(of: session.remoteClipboard) { _, _ in clipboardCopied = false }
         .onChange(of: session.resolution) { _, _ in updateDesktopArea() }
-        .confirmationDialog("Use Phone Workspace?", isPresented: $confirmPhoneWorkspace, titleVisibility: .visible) {
-            Button("Use Phone Workspace") { changeWorkspace(enabled: true) }
-        } message: {
-            Text("The host monitor switches to 1280 × 720 during this session. Its original resolution returns when you disconnect.")
-        }
         .onDisappear {
             endPointerDrag()
             releaseHeldModifiers()
@@ -846,6 +829,37 @@ private struct RemoteDesktopScreen: View {
         .accessibilityLabel("Desktop region")
     }
 
+    private func viewportControls(_ axis: ViewportAxis) -> some View {
+        let horizontal = axis == .horizontal
+        return HStack(spacing: 12) {
+            Button {
+                resetDesktopView()
+                session.moveViewport(by: -10)
+            } label: {
+                Image(systemName: horizontal ? "chevron.left" : "chevron.up")
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(horizontal ? "View farther left" : "View farther up")
+            .disabled(session.viewportPosition == 0)
+            Button("Whole desktop") {
+                resetDesktopView()
+                session.setAdaptiveView(false)
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            Button {
+                resetDesktopView()
+                session.moveViewport(by: 10)
+            } label: {
+                Image(systemName: horizontal ? "chevron.right" : "chevron.down")
+                    .frame(width: 44, height: 44)
+            }
+            .accessibilityLabel(horizontal ? "View farther right" : "View farther down")
+            .disabled(session.viewportPosition == 100)
+        }
+        .font(.subheadline.weight(.semibold))
+        .background(Color(white: 0.09))
+    }
+
     private var phasePlaceholder: some View {
         VStack(spacing: 12) {
             if session.phase == .connecting {
@@ -923,10 +937,16 @@ private struct RemoteDesktopScreen: View {
             .disabled(!session.canControl)
 
             Menu {
-                if session.phoneWorkspaceActive {
-                    Button("Restore Desktop Layout", systemImage: "display") { changeWorkspace(enabled: false) }
+                if session.adaptiveView {
+                    Button("Show Whole Desktop", systemImage: "display") {
+                        resetDesktopView()
+                        session.setAdaptiveView(false)
+                    }
                 } else {
-                    Button("Use Phone Workspace", systemImage: "iphone.landscape") { confirmPhoneWorkspace = true }
+                    Button("Fit to Device", systemImage: "viewfinder") {
+                        resetDesktopView()
+                        session.setAdaptiveView(true)
+                    }
                 }
                 Button("Use Sharper Stream", systemImage: "text.magnifyingglass") {
                     endPointerDrag()
@@ -1066,13 +1086,11 @@ private struct RemoteDesktopScreen: View {
         }
     }
 
-    private func changeWorkspace(enabled: Bool) {
+    private func resetDesktopView() {
         endPointerDrag()
         releaseHeldModifiers()
-        desktopArea = enabled ? .overview : .center
+        desktopArea = .overview
         updateDesktopArea()
-        onWorkspaceChange(enabled)
-        session.setPhoneWorkspace(enabled)
     }
 
     private func zoomFromCenter(by scale: CGFloat) {

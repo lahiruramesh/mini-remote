@@ -55,7 +55,9 @@ final class RemoteSession: ObservableObject {
     @Published private(set) var remoteClipboard: String?
     @Published private(set) var streamLabel = ""
     @Published private(set) var layoutNotice: String?
-    @Published private(set) var phoneWorkspaceActive = false
+    @Published private(set) var viewportAxis: ViewportAxis?
+    @Published private(set) var adaptiveView = true
+    @Published private(set) var viewportPosition = 50
     @Published private(set) var canControl = false
     let video = RemoteVideo()
 
@@ -73,6 +75,7 @@ final class RemoteSession: ObservableObject {
     private var constrained = false
     private var activeProfile: MobileQuality = .balanced
     private var profileNegotiated = false
+    private var viewport: MobileViewport?
 
     init() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -101,22 +104,51 @@ final class RemoteSession: ObservableObject {
             phase = .failed("Enter the host’s pairing token.")
             return
         }
+        disconnect()
         request = Request(device: device, token: secret, clipboard: shareClipboard)
-        let profile = device.quality == .automatic ? (constrained ? .lowData : .balanced) : device.quality
-        start(profile, replacingConnection: false)
+        phase = .connecting
     }
 
     func disconnect() {
         closeTransport()
         request = nil
+        viewport = nil
+        viewportPosition = 50
+        adaptiveView = true
         phase = .idle
         streamLabel = ""
     }
 
-    func setPhoneWorkspace(_ enabled: Bool) {
-        guard phase == .streaming, var request else { return }
-        request.device.phoneWorkspace = enabled
-        self.request = request
+    func configureViewport(_ size: CGSize) {
+        guard let request, var layout = MobileViewport(size: size) else { return }
+        let previous = viewport
+        guard previous?.width != layout.width || previous?.height != layout.height else { return }
+        if let previous, (previous.width > previous.height) != (layout.width > layout.height) {
+            viewportPosition = 50
+        }
+        layout.position = viewportPosition
+        viewport = layout
+        if previous == nil {
+            let quality = request.device.quality
+            start(quality == .automatic ? (constrained ? .lowData : .balanced) : quality, replacingConnection: false)
+        } else if adaptiveView {
+            start(activeProfile, replacingConnection: true)
+        }
+    }
+
+    func setAdaptiveView(_ enabled: Bool) {
+        guard phase == .streaming, adaptiveView != enabled else { return }
+        adaptiveView = enabled
+        start(activeProfile, replacingConnection: true)
+    }
+
+    func moveViewport(by amount: Int) {
+        guard phase == .streaming, var viewport, adaptiveView else { return }
+        let position = min(max(viewportPosition + amount, 0), 100)
+        guard position != viewportPosition else { return }
+        viewportPosition = position
+        viewport.position = position
+        self.viewport = viewport
         start(activeProfile, replacingConnection: true)
     }
 
@@ -187,7 +219,7 @@ final class RemoteSession: ObservableObject {
         transport = nil
         resolution = .zero
         layoutNotice = nil
-        phoneWorkspaceActive = false
+        viewportAxis = nil
         clipboardAvailable = false
         remoteClipboard = nil
         canControl = false
@@ -201,7 +233,7 @@ final class RemoteSession: ObservableObject {
         phase = .connecting
         activeProfile = profile
         streamLabel = "Connecting"
-        let usePhoneWorkspace = request.device.usesPhoneWorkspace
+        let viewport = adaptiveView ? viewport : nil
         let attempt = Attempt()
         current = attempt
         let video = video
@@ -211,7 +243,7 @@ final class RemoteSession: ObservableObject {
                 let transport = try SessionTransport.connect(host: request.device.host, port: request.device.port)
                 guard attempt.set(transport) else { return }
                 try transport.authenticate(token: request.token, clipboard: request.clipboard, profile: profile,
-                                           phoneWorkspace: usePhoneWorkspace)
+                                           viewport: viewport)
                 DispatchQueue.main.async { [weak self] in
                     self?.transportBecameAvailable(transport, attempt: attempt)
                 }
@@ -290,11 +322,9 @@ final class RemoteSession: ObservableObject {
         switch kind {
         case "ready":
             resolution = CGSize(width: data["width"] as? Int ?? 0, height: data["height"] as? Int ?? 0)
-            phoneWorkspaceActive = data["phone_workspace"] as? Bool ?? false
-            if request?.device.usesPhoneWorkspace == true && !phoneWorkspaceActive {
-                layoutNotice = data["phone_workspace"] == nil
-                    ? "Update the desktop connector to use Phone Workspace."
-                    : "Phone Workspace is unavailable for this display. Showing the regular desktop."
+            viewportAxis = (data["viewport_axis"] as? String).flatMap(ViewportAxis.init(rawValue:))
+            if adaptiveView && viewportAxis == nil {
+                layoutNotice = "Update the desktop connector to use Fit to Device."
             }
             let negotiated = data["profile"] as? String
             profileNegotiated = negotiated != nil
@@ -304,7 +334,7 @@ final class RemoteSession: ObservableObject {
             case "sharp": MobileQuality.sharp.title
             default: "Desktop"
             }
-            let layout = phoneWorkspaceActive ? "Phone Workspace" : name
+            let layout = viewportAxis == nil ? name : "Device view"
             streamLabel = "\(layout) · \(Int(resolution.width)) × \(Int(resolution.height))"
         case "input_status":
             canControl = data["enabled"] as? Bool ?? false

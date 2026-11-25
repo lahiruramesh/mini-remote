@@ -20,6 +20,7 @@ pub fn run(host: &str, port: u16, token: &str, profile: StreamProfile) -> Result
             clipboard: false,
             profile,
             phone_workspace: false,
+            viewport: None,
         },
     )
     .map_err(|error| error.to_string())?;

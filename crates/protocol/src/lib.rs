@@ -15,10 +15,92 @@ const CONTROL: u8 = 0;
 const VIDEO: u8 = 1;
 
 pub struct VideoSource {
+    pub viewport: Option<VideoViewport>,
     pub width: u32,
     pub height: u32,
     pub reader: Box<dyn Read + Send>,
     pub stop: Box<dyn FnOnce() + Send>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+pub struct ViewportRequest {
+    pub width: u16,
+    pub height: u16,
+    pub position: u8,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ViewportAxis {
+    None,
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Copy)]
+pub struct VideoViewport {
+    pub axis: ViewportAxis,
+    pub width: u32,
+    pub height: u32,
+    scale_x: f32,
+    scale_y: f32,
+    offset_x: f32,
+    offset_y: f32,
+}
+
+impl ViewportRequest {
+    pub fn fit(self, width: u32, height: u32) -> VideoViewport {
+        let aspect = f64::from(self.width) / f64::from(self.height);
+        let native = f64::from(width) / f64::from(height);
+        let mut viewport = VideoViewport {
+            axis: ViewportAxis::None,
+            width,
+            height,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            offset_x: 0.0,
+            offset_y: 0.0,
+        };
+        let position = f32::from(self.position) / 100.0;
+        if native > aspect {
+            viewport.width = ((f64::from(height) * aspect) as u32 & !1).clamp(2, width);
+            viewport.scale_x = viewport.width as f32 / width as f32;
+            viewport.offset_x = (1.0 - viewport.scale_x) * position;
+            if viewport.width != width {
+                viewport.axis = ViewportAxis::Horizontal;
+            }
+        } else if native < aspect {
+            viewport.height = ((f64::from(width) / aspect) as u32 & !1).clamp(2, height);
+            viewport.scale_y = viewport.height as f32 / height as f32;
+            viewport.offset_y = (1.0 - viewport.scale_y) * position;
+            if viewport.height != height {
+                viewport.axis = ViewportAxis::Vertical;
+            }
+        }
+        viewport
+    }
+}
+
+impl VideoViewport {
+    pub fn crop_filter(self) -> String {
+        if self.axis == ViewportAxis::None {
+            return String::new();
+        }
+        format!(
+            "crop=round(iw*{}/2)*2:round(ih*{}/2)*2:iw*{}:ih*{}:exact=1,",
+            f64::from(self.scale_x),
+            f64::from(self.scale_y),
+            self.offset_x,
+            self.offset_y,
+        )
+    }
+
+    pub fn map_pointer(self, x: f32, y: f32) -> InputEvent {
+        InputEvent::PointerMove {
+            x: (self.offset_x + x * self.scale_x).clamp(0.0, 1.0),
+            y: (self.offset_y + y * self.scale_y).clamp(0.0, 1.0),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -123,6 +205,8 @@ pub enum ClientMessage {
         profile: StreamProfile,
         #[serde(default)]
         phone_workspace: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        viewport: Option<ViewportRequest>,
     },
     RedeemInvite {
         code: String,
@@ -156,6 +240,8 @@ pub enum ServerMessage {
         profile: StreamProfile,
         #[serde(default)]
         phone_workspace: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        viewport_axis: Option<ViewportAxis>,
     },
     Paired {
         token: String,
@@ -231,6 +317,15 @@ fn validate_client(message: &ClientMessage) -> io::Result<()> {
     match message {
         ClientMessage::Authenticate { token, .. } if token.len() > 128 => {
             Err(invalid("token too large"))
+        }
+        ClientMessage::Authenticate {
+            viewport: Some(viewport),
+            ..
+        } if !(2..=4096).contains(&viewport.width)
+            || !(2..=4096).contains(&viewport.height)
+            || viewport.position > 100 =>
+        {
+            Err(invalid("invalid video viewport"))
         }
         ClientMessage::RedeemInvite { code }
             if code.len() != 32 || !code.bytes().all(|b| b.is_ascii_hexdigit()) =>
@@ -349,9 +444,58 @@ mod tests {
             ClientMessage::Authenticate {
                 profile: StreamProfile::Desktop,
                 phone_workspace: false,
+                viewport: None,
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn fits_portrait_view_and_maps_pointer_to_the_visible_region() {
+        let view = ViewportRequest {
+            width: 500,
+            height: 1000,
+            position: 100,
+        }
+        .fit(3440, 1440);
+        assert_eq!(view.axis, ViewportAxis::Horizontal);
+        assert_eq!(
+            StreamProfile::Balanced.limit_dimensions(view.width, view.height),
+            (640, 1280)
+        );
+        let InputEvent::PointerMove { x, y } = view.map_pointer(0.0, 0.5) else {
+            unreachable!()
+        };
+        assert!((x - 2720.0 / 3440.0).abs() < 0.0001);
+        assert_eq!(y, 0.5);
+        assert_eq!(
+            view.map_pointer(1.0, 1.0),
+            InputEvent::PointerMove { x: 1.0, y: 1.0 }
+        );
+    }
+
+    #[test]
+    fn fits_landscape_view_and_maps_pointer_when_the_desktop_is_taller() {
+        let view = ViewportRequest {
+            width: 1000,
+            height: 500,
+            position: 0,
+        }
+        .fit(1920, 1080);
+        assert_eq!(view.axis, ViewportAxis::Vertical);
+        assert_eq!((view.width, view.height), (1920, 960));
+        assert_eq!(
+            view.map_pointer(0.5, 0.0),
+            InputEvent::PointerMove { x: 0.5, y: 0.0 }
+        );
+        let matching = ViewportRequest {
+            width: 16,
+            height: 9,
+            position: 50,
+        }
+        .fit(1920, 1080);
+        assert_eq!(matching.axis, ViewportAxis::None);
+        assert!(matching.crop_filter().is_empty());
     }
 
     #[test]
@@ -367,6 +511,7 @@ mod tests {
                 diagnostics: false,
                 profile: StreamProfile::Desktop,
                 phone_workspace: false,
+                viewport_axis: None,
             },
         );
     }

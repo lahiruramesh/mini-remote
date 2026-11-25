@@ -204,13 +204,16 @@ final class SessionTransport: @unchecked Sendable {
         return token
     }
 
-    func authenticate(token: String, clipboard: Bool, profile: MobileQuality, phoneWorkspace: Bool) throws {
-        try write(packet(message: "authenticate", data: [
+    func authenticate(token: String, clipboard: Bool, profile: MobileQuality, viewport: MobileViewport?) throws {
+        var data: [String: Any] = [
             "token": token,
             "clipboard": clipboard,
             "profile": profile.wireName,
-            "phone_workspace": phoneWorkspace,
-        ]))
+        ]
+        if let viewport {
+            data["viewport"] = ["width": viewport.width, "height": viewport.height, "position": viewport.position]
+        }
+        try write(packet(message: "authenticate", data: data))
     }
 
     func readFrame() throws -> (kind: UInt8, payload: Data) {
