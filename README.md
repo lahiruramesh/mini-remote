@@ -50,7 +50,7 @@ Use **Connection** in the viewer toolbar to switch or close a window on the othe
 
 The default stream uses the host display’s native resolution up to 3840 × 2160. The viewer fits video to its window and keeps its aspect ratio. Choose **View → Full screen** to use the available space on your monitor. For internet connections, choose **Low data**, **Balanced**, or **Sharp** under **Connection → Stream quality** before connecting. The viewer CLI supports `--quality native|low-data|balanced|sharp`.
 
-On iPhone or iPad, connect and choose **View → Use Phone Workspace** to temporarily switch the host monitor to 1280 × 720. The desktop uses the smaller workspace so app controls are easier to reach in landscape. This works on macOS and compatible wlroots Linux desktops when the monitor offers the mode. Disconnect or select **Restore Desktop Layout** to bring back the original resolution. You can also enable Phone Workspace by default under **Edit device**. The video quality setting controls how much data the stream uses.
+The iPhone app uses **Phone Workspace** by default. It temporarily switches the host monitor to 1280 × 720, so app controls are easier to read and reach in landscape. This works on macOS and compatible wlroots Linux desktops when the monitor offers the mode. Select **View → Restore Desktop Layout** to use the regular desktop for that device again. Disconnecting also restores the host’s resolution. On iPad, you can turn on Phone Workspace from **View** or **Edit device**.
 
 ## Workspace and diagnostics
 

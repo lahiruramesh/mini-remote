@@ -40,10 +40,19 @@ struct ContentView: View {
                 }
                 .navigationDestination(for: UUID.self) { deviceID in
                     if let device = store.devices.first(where: { $0.id == deviceID }) {
-                        RemoteDesktopScreen(session: session, device: device) {
-                            session.disconnect()
-                            navigationPath.removeAll()
-                        }
+                        RemoteDesktopScreen(
+                            session: session,
+                            device: device,
+                            onWorkspaceChange: { enabled in
+                                var updated = device
+                                updated.phoneWorkspace = enabled
+                                try? store.save(updated, token: nil)
+                            },
+                            onDisconnect: {
+                                session.disconnect()
+                                navigationPath.removeAll()
+                            }
+                        )
                         .toolbar(.hidden, for: .tabBar)
                     } else {
                         ContentUnavailableView("Device removed", systemImage: "desktopcomputer.trianglebadge.exclamationmark")
@@ -574,7 +583,7 @@ private struct DeviceEditorSheet: View {
 
         Section {
             Toggle("Use Phone Workspace", isOn: Binding(
-                get: { device.phoneWorkspace == true },
+                get: { device.usesPhoneWorkspace },
                 set: { device.phoneWorkspace = $0 }
             ))
         } footer: {
@@ -622,6 +631,7 @@ private struct DeviceEditorSheet: View {
 private struct RemoteDesktopScreen: View {
     @ObservedObject var session: RemoteSession
     let device: SavedDevice
+    let onWorkspaceChange: (Bool) -> Void
     let onDisconnect: () -> Void
 
     @State private var inputMode: RemoteInputMode = .direct
@@ -655,6 +665,14 @@ private struct RemoteDesktopScreen: View {
                 }
                 screenSurface
                 if session.phase == .streaming && DesktopViewport.isUltraWide(session.resolution) {
+                    if session.layoutNotice == nil {
+                        Button("Use Phone Workspace", systemImage: "iphone.landscape") {
+                            confirmPhoneWorkspace = true
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(Color(white: 0.09))
+                    }
                     desktopAreaBar
                 }
             }
@@ -740,9 +758,9 @@ private struct RemoteDesktopScreen: View {
                 Color.black
                 if session.phase == .streaming {
                     DesktopVideoView(video: session.video)
-                        .frame(width: viewport.fitted.width, height: viewport.fitted.height)
-                        .scaleEffect(zoom)
-                        .offset(viewport.offset)
+                        .frame(width: viewport.displayed.width, height: viewport.displayed.height)
+                        .position(x: proxy.size.width / 2 + viewport.offset.width,
+                                  y: proxy.size.height / 2 + viewport.offset.height)
                         .accessibilityHidden(true)
                     RemotePointerSurface(
                         tap: { location in pointerTap(location, viewport: viewport) },
@@ -910,6 +928,11 @@ private struct RemoteDesktopScreen: View {
                 } else {
                     Button("Use Phone Workspace", systemImage: "iphone.landscape") { confirmPhoneWorkspace = true }
                 }
+                Button("Use Sharper Stream", systemImage: "text.magnifyingglass") {
+                    endPointerDrag()
+                    releaseHeldModifiers()
+                    session.useSharperStream()
+                }
                 Section("Pinch to zoom. Drag with two fingers to pan.") {
                     Button("Fit Desktop", systemImage: "arrow.down.right.and.arrow.up.left") {
                         desktopArea = .overview
@@ -1048,6 +1071,7 @@ private struct RemoteDesktopScreen: View {
         releaseHeldModifiers()
         desktopArea = enabled ? .overview : .center
         updateDesktopArea()
+        onWorkspaceChange(enabled)
         session.setPhoneWorkspace(enabled)
     }
 

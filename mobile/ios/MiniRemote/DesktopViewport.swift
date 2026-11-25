@@ -16,7 +16,7 @@ struct DesktopViewport {
         self.offset = clamp(offset)
     }
 
-    private var displayed: CGSize {
+    var displayed: CGSize {
         CGSize(width: fitted.width * zoom, height: fitted.height * zoom)
     }
 

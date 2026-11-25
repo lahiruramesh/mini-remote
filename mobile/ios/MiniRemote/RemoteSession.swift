@@ -120,6 +120,13 @@ final class RemoteSession: ObservableObject {
         start(activeProfile, replacingConnection: true)
     }
 
+    func useSharperStream() {
+        guard phase == .streaming, var request, activeProfile != .sharp else { return }
+        request.device.quality = .sharp
+        self.request = request
+        start(.sharp, replacingConnection: true)
+    }
+
     func move(x: Double, y: Double) {
         input("pointer_move", ["x": max(0, min(1, x)), "y": max(0, min(1, y))], droppable: true)
     }
@@ -194,6 +201,7 @@ final class RemoteSession: ObservableObject {
         phase = .connecting
         activeProfile = profile
         streamLabel = "Connecting"
+        let usePhoneWorkspace = request.device.usesPhoneWorkspace
         let attempt = Attempt()
         current = attempt
         let video = video
@@ -203,7 +211,7 @@ final class RemoteSession: ObservableObject {
                 let transport = try SessionTransport.connect(host: request.device.host, port: request.device.port)
                 guard attempt.set(transport) else { return }
                 try transport.authenticate(token: request.token, clipboard: request.clipboard, profile: profile,
-                                           phoneWorkspace: request.device.phoneWorkspace == true)
+                                           phoneWorkspace: usePhoneWorkspace)
                 DispatchQueue.main.async { [weak self] in
                     self?.transportBecameAvailable(transport, attempt: attempt)
                 }
@@ -283,7 +291,7 @@ final class RemoteSession: ObservableObject {
         case "ready":
             resolution = CGSize(width: data["width"] as? Int ?? 0, height: data["height"] as? Int ?? 0)
             phoneWorkspaceActive = data["phone_workspace"] as? Bool ?? false
-            if request?.device.phoneWorkspace == true && !phoneWorkspaceActive {
+            if request?.device.usesPhoneWorkspace == true && !phoneWorkspaceActive {
                 layoutNotice = data["phone_workspace"] == nil
                     ? "Update the desktop connector to use Phone Workspace."
                     : "Phone Workspace is unavailable for this display. Showing the regular desktop."
