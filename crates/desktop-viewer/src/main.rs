@@ -258,6 +258,7 @@ impl Viewer {
                         token,
                         clipboard,
                         profile,
+                        phone_workspace: false,
                     },
                 ) {
                     let _ = writer_events
@@ -298,6 +299,7 @@ impl Viewer {
                         height,
                         diagnostics,
                         profile,
+                        ..
                     }) if first => {
                         first = false;
                         if width == 0 || height == 0 || width > 8192 || height > 8192 {

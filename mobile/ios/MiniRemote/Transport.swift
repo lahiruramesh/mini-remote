@@ -204,11 +204,12 @@ final class SessionTransport: @unchecked Sendable {
         return token
     }
 
-    func authenticate(token: String, clipboard: Bool, profile: MobileQuality) throws {
+    func authenticate(token: String, clipboard: Bool, profile: MobileQuality, phoneWorkspace: Bool) throws {
         try write(packet(message: "authenticate", data: [
             "token": token,
             "clipboard": clipboard,
             "profile": profile.wireName,
+            "phone_workspace": phoneWorkspace,
         ]))
     }
 

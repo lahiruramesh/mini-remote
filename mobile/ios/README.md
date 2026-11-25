@@ -10,7 +10,7 @@ Mini Remote requires iOS or iPadOS 17 or later. The SwiftUI viewer uses Apple’
 
 If a local build shows **Untrusted Developer**, open **Settings → General → VPN & Device Management** on the iPhone, select the matching **Developer App** profile, and follow the trust prompt while online. A Personal Team build needs to be rebuilt and reinstalled when its provisioning profile expires. [Apple Developer account overview](https://developer.apple.com/help/account/basics/about-your-developer-account/)
 
-TestFlight and the App Store require a team enrolled in the Apple Developer Program. Use that team and the registered bundle ID to archive in Xcode. For public review, prepare a privacy policy URL and a demo setup that reviewers can access independently. [Apple distribution guide](https://developer.apple.com/documentation/Xcode/distributing-your-app-for-beta-testing-and-releases/) [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
+TestFlight and the App Store require a team enrolled in the Apple Developer Program. Use that team and the registered bundle ID to archive with Xcode 27 or later. Apple requires the iOS 27 SDK for submissions starting April 2027. For public review, prepare a privacy policy URL and a demo setup that reviewers can access independently. [Apple submission requirements](https://developer.apple.com/app-store/submitting/) [Apple distribution guide](https://developer.apple.com/documentation/Xcode/distributing-your-app-for-beta-testing-and-releases/) [App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)
 
 ## Connect to a desktop
 
@@ -34,7 +34,9 @@ The code expires after three minutes and can be used once. Mini Remote stores th
 3. Open Mini Remote and tap **Add device**. Enter a name, the numeric Tailscale IPv4 address, port `47990`, and the pairing token. Choose whether to remember the token in the device’s Keychain. Tap **Save & Connect**. When connecting to a saved device without a remembered token, enter the token and tap **Connect**.
 4. Use **Pointer** to switch between direct touch and a virtual trackpad, right-click, or scroll. Use **View** to fit or fill the screen, or pinch to zoom and drag with two fingers to pan across the desktop. **Keyboard** opens text entry, modifiers, arrow keys, and clipboard actions. Use **Apps** to switch apps or close the active window. In landscape, the controls move to the right to give the desktop more vertical space.
 
-For an ultrawide desktop, Mini Remote opens in **Center** view. Tap **Left** or **Right** to move across the display, or **Full** to see the whole desktop. If text looks blurry when zoomed, try **Sharp** in the saved device’s quality settings.
+For a smaller desktop layout, rotate your iPhone or iPad to landscape and select **View → Use Phone Workspace**. The updated connector temporarily switches the macOS or supported Linux display to 1280 × 720. App windows use the smaller desktop, and the host restores the previous mode when you disconnect. Use **View → Restore Desktop Layout** to switch back during a session. To use Phone Workspace whenever you connect to a device, enable it in **Edit device**. Mini Remote shows the regular desktop and explains if the connector or monitor cannot offer the workspace.
+
+On a regular ultrawide desktop, Mini Remote opens in **Center** view. Tap **Left** or **Right** to move across the display, or **Full** to see the whole desktop. If text looks blurry when zoomed, try **Sharp** in the saved device’s quality settings.
 
 To move text between devices, enable **Share clipboard for this session** on connect and allow clipboard on the connector. In **Keyboard**, use the paste button to paste iPhone text into the focused desktop app. After copying text on the host during the session, tap **Copy from desktop** to put it on the iPhone clipboard.
 

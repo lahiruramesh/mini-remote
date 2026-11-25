@@ -54,11 +54,13 @@ final class RemoteSession: ObservableObject {
     @Published private(set) var clipboardAvailable = false
     @Published private(set) var remoteClipboard: String?
     @Published private(set) var streamLabel = ""
+    @Published private(set) var layoutNotice: String?
+    @Published private(set) var phoneWorkspaceActive = false
     @Published private(set) var canControl = false
     let video = RemoteVideo()
 
     private struct Request {
-        let device: SavedDevice
+        var device: SavedDevice
         let token: String
         let clipboard: Bool
     }
@@ -109,6 +111,13 @@ final class RemoteSession: ObservableObject {
         request = nil
         phase = .idle
         streamLabel = ""
+    }
+
+    func setPhoneWorkspace(_ enabled: Bool) {
+        guard phase == .streaming, var request else { return }
+        request.device.phoneWorkspace = enabled
+        self.request = request
+        start(activeProfile, replacingConnection: true)
     }
 
     func move(x: Double, y: Double) {
@@ -170,6 +179,8 @@ final class RemoteSession: ObservableObject {
         current = nil
         transport = nil
         resolution = .zero
+        layoutNotice = nil
+        phoneWorkspaceActive = false
         clipboardAvailable = false
         remoteClipboard = nil
         canControl = false
@@ -187,11 +198,12 @@ final class RemoteSession: ObservableObject {
         current = attempt
         let video = video
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            if replacingConnection { Thread.sleep(forTimeInterval: 0.30) }
+            if replacingConnection { Thread.sleep(forTimeInterval: 1) }
             do {
                 let transport = try SessionTransport.connect(host: request.device.host, port: request.device.port)
                 guard attempt.set(transport) else { return }
-                try transport.authenticate(token: request.token, clipboard: request.clipboard, profile: profile)
+                try transport.authenticate(token: request.token, clipboard: request.clipboard, profile: profile,
+                                           phoneWorkspace: request.device.phoneWorkspace == true)
                 DispatchQueue.main.async { [weak self] in
                     self?.transportBecameAvailable(transport, attempt: attempt)
                 }
@@ -270,6 +282,12 @@ final class RemoteSession: ObservableObject {
         switch kind {
         case "ready":
             resolution = CGSize(width: data["width"] as? Int ?? 0, height: data["height"] as? Int ?? 0)
+            phoneWorkspaceActive = data["phone_workspace"] as? Bool ?? false
+            if request?.device.phoneWorkspace == true && !phoneWorkspaceActive {
+                layoutNotice = data["phone_workspace"] == nil
+                    ? "Update the desktop connector to use Phone Workspace."
+                    : "Phone Workspace is unavailable for this display. Showing the regular desktop."
+            }
             let negotiated = data["profile"] as? String
             profileNegotiated = negotiated != nil
             let name = switch negotiated {
@@ -278,7 +296,8 @@ final class RemoteSession: ObservableObject {
             case "sharp": MobileQuality.sharp.title
             default: "Desktop"
             }
-            streamLabel = "\(name) · \(Int(resolution.width)) × \(Int(resolution.height))"
+            let layout = phoneWorkspaceActive ? "Phone Workspace" : name
+            streamLabel = "\(layout) · \(Int(resolution.width)) × \(Int(resolution.height))"
         case "input_status":
             canControl = data["enabled"] as? Bool ?? false
         case "clipboard_status":

@@ -121,6 +121,8 @@ pub enum ClientMessage {
         clipboard: bool,
         #[serde(default)]
         profile: StreamProfile,
+        #[serde(default)]
+        phone_workspace: bool,
     },
     RedeemInvite {
         code: String,
@@ -152,6 +154,8 @@ pub enum ServerMessage {
         diagnostics: bool,
         #[serde(default)]
         profile: StreamProfile,
+        #[serde(default)]
+        phone_workspace: bool,
     },
     Paired {
         token: String,
@@ -344,6 +348,7 @@ mod tests {
             read_client(&mut packets.as_slice()).unwrap(),
             ClientMessage::Authenticate {
                 profile: StreamProfile::Desktop,
+                phone_workspace: false,
                 ..
             }
         ));
@@ -361,6 +366,7 @@ mod tests {
                 height: 1080,
                 diagnostics: false,
                 profile: StreamProfile::Desktop,
+                phone_workspace: false,
             },
         );
     }

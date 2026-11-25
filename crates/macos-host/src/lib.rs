@@ -37,6 +37,57 @@ unsafe extern "C" {
     fn CGMainDisplayID() -> u32;
     fn CGDisplayPixelsWide(display: u32) -> usize;
     fn CGDisplayPixelsHigh(display: u32) -> usize;
+    fn CGDisplayBounds(display: u32) -> CGRect;
+    fn CGDisplayIsInMirrorSet(display: u32) -> bool;
+    fn CGDisplayCopyDisplayMode(display: u32) -> CGDisplayModeRef;
+    fn CGDisplayCopyAllDisplayModes(display: u32, options: *const c_void) -> CFArrayRef;
+    fn CGDisplayModeGetWidth(mode: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeGetHeight(mode: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeGetPixelWidth(mode: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeGetPixelHeight(mode: CGDisplayModeRef) -> usize;
+    fn CGDisplayModeGetRefreshRate(mode: CGDisplayModeRef) -> f64;
+    fn CGDisplayModeGetIOFlags(mode: CGDisplayModeRef) -> u32;
+    fn CGBeginDisplayConfiguration(config: *mut CGDisplayConfigRef) -> i32;
+    fn CGConfigureDisplayWithDisplayMode(
+        config: CGDisplayConfigRef,
+        display: u32,
+        mode: CGDisplayModeRef,
+        options: *const c_void,
+    ) -> i32;
+    fn CGCompleteDisplayConfiguration(config: CGDisplayConfigRef, option: u32) -> i32;
+    fn CGCancelDisplayConfiguration(config: CGDisplayConfigRef) -> i32;
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    fn CFArrayGetCount(array: CFArrayRef) -> isize;
+    fn CFArrayGetValueAtIndex(array: CFArrayRef, index: isize) -> *const c_void;
+    fn CFRelease(value: *const c_void);
+}
+
+type CFArrayRef = *const c_void;
+type CGDisplayModeRef = *const c_void;
+type CGDisplayConfigRef = *mut c_void;
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGPoint {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGSize {
+    width: f64,
+    height: f64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CGRect {
+    origin: CGPoint,
+    size: CGSize,
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
@@ -47,6 +98,9 @@ unsafe extern "C" {
 /// macOS desktop capture, input injection, and clipboard access.
 pub struct Host {
     input: Option<Enigo>,
+    display_mode_guard: Option<DisplayModeGuard>,
+    display_origin_x: i32,
+    display_origin_y: i32,
     desktop_width: u32,
     desktop_height: u32,
     width: u32,
@@ -66,12 +120,8 @@ impl Host {
     /// explicit user action to invoke macOS's permission flow.
     pub fn new() -> HostResult<Self> {
         let display = unsafe { CGMainDisplayID() };
-        let desktop_width = u32::try_from(unsafe { CGDisplayPixelsWide(display) })
-            .unwrap_or(1280)
-            .max(1);
-        let desktop_height = u32::try_from(unsafe { CGDisplayPixelsHigh(display) })
-            .unwrap_or(720)
-            .max(1);
+        let (display_origin_x, display_origin_y, desktop_width, desktop_height) =
+            display_geometry(display);
         let (width, height) = output_dimensions(desktop_width, desktop_height);
         let fps = std::env::var("REMOTE_MACOS_FPS")
             .ok()
@@ -87,6 +137,9 @@ impl Host {
             // Defer Enigo initialization until the first input event. A host
             // can stream video even when the user has not granted input access.
             input: None,
+            display_mode_guard: None,
+            display_origin_x,
+            display_origin_y,
             desktop_width,
             desktop_height,
             width,
@@ -96,6 +149,40 @@ impl Host {
             scroll_x_fraction: 0.0,
             scroll_y_fraction: 0.0,
         })
+    }
+
+    /// Creates a host for a phone-sized workspace by selecting the main
+    /// display's 1280×720 logical, 1× mode. The original mode is restored when
+    /// this host is dropped, unless the user changes the display mode first.
+    /// Requires existing Screen Recording permission and an unmirrored main
+    /// display; this method never prompts or silently falls back.
+    pub fn phone_workspace() -> HostResult<Self> {
+        if !screen_permission_granted() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "macOS Screen Recording permission is required before changing display mode",
+            )
+            .into());
+        }
+        let display = unsafe { CGMainDisplayID() };
+        if unsafe { CGDisplayIsInMirrorSet(display) } {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "phone workspace does not support a mirrored main display",
+            )
+            .into());
+        }
+        let guard = DisplayModeGuard::apply(display)?;
+        let mut host = Self::new()?;
+        host.display_mode_guard = Some(guard);
+        let (display_origin_x, display_origin_y, desktop_width, desktop_height) =
+            display_geometry(display);
+        host.display_origin_x = display_origin_x;
+        host.display_origin_y = display_origin_y;
+        host.desktop_width = desktop_width;
+        host.desktop_height = desktop_height;
+        (host.width, host.height) = output_dimensions(desktop_width, desktop_height);
+        Ok(host)
     }
 
     /// Starts a low-latency H.264 Annex B stream from the main display.
@@ -220,8 +307,8 @@ impl Host {
         let input = self.input.as_mut().expect("Enigo was just initialized");
         match event {
             InputEvent::PointerMove { x, y } => {
-                let x = normalized_coordinate(x, self.desktop_width);
-                let y = normalized_coordinate(y, self.desktop_height);
+                let x = self.display_origin_x + normalized_coordinate(x, self.desktop_width);
+                let y = self.display_origin_y + normalized_coordinate(y, self.desktop_height);
                 input.move_mouse(x, y, Coordinate::Abs)?;
             }
             InputEvent::PointerButton { button, pressed } => {
@@ -338,6 +425,203 @@ fn ffmpeg_executable() -> PathBuf {
         .map(PathBuf::from)
         .find(|candidate| candidate.is_file())
         .unwrap_or_else(|| PathBuf::from("ffmpeg"))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ModeFingerprint {
+    width: usize,
+    height: usize,
+    pixel_width: usize,
+    pixel_height: usize,
+    refresh_rate: f64,
+    io_flags: u32,
+}
+
+impl ModeFingerprint {
+    unsafe fn read(mode: CGDisplayModeRef) -> Self {
+        Self {
+            width: unsafe { CGDisplayModeGetWidth(mode) },
+            height: unsafe { CGDisplayModeGetHeight(mode) },
+            pixel_width: unsafe { CGDisplayModeGetPixelWidth(mode) },
+            pixel_height: unsafe { CGDisplayModeGetPixelHeight(mode) },
+            refresh_rate: unsafe { CGDisplayModeGetRefreshRate(mode) },
+            io_flags: unsafe { CGDisplayModeGetIOFlags(mode) },
+        }
+    }
+
+    fn matches(self, other: Self) -> bool {
+        self.width == other.width
+            && self.height == other.height
+            && self.pixel_width == other.pixel_width
+            && self.pixel_height == other.pixel_height
+            && self.io_flags == other.io_flags
+            && ((self.refresh_rate - other.refresh_rate).abs() < 0.5
+                || (self.refresh_rate == 0.0 && other.refresh_rate == 0.0))
+    }
+}
+
+struct DisplayModeGuard {
+    display: u32,
+    original_mode: CGDisplayModeRef,
+    selected: ModeFingerprint,
+}
+
+impl DisplayModeGuard {
+    fn apply(display: u32) -> HostResult<Self> {
+        let original_mode = unsafe { CGDisplayCopyDisplayMode(display) };
+        if original_mode.is_null() {
+            return Err(io::Error::other("could not read current main display mode").into());
+        }
+        let current = unsafe { ModeFingerprint::read(original_mode) };
+        let modes = unsafe { CGDisplayCopyAllDisplayModes(display, std::ptr::null()) };
+        if modes.is_null() {
+            unsafe { CFRelease(original_mode) };
+            return Err(io::Error::other("could not enumerate main display modes").into());
+        }
+
+        let mut candidates = Vec::new();
+        let count = unsafe { CFArrayGetCount(modes) };
+        for index in 0..count {
+            let mode = unsafe { CFArrayGetValueAtIndex(modes, index) };
+            if mode.is_null() {
+                continue;
+            }
+            let fingerprint = unsafe { ModeFingerprint::read(mode) };
+            if fingerprint.width == 1280
+                && fingerprint.height == 720
+                && fingerprint.pixel_width == 1280
+                && fingerprint.pixel_height == 720
+            {
+                candidates.push((mode, fingerprint));
+            }
+        }
+        let selected = candidates.into_iter().min_by(|(_, left), (_, right)| {
+            let refresh_distance = |mode: ModeFingerprint| {
+                if current.refresh_rate > 0.0 && mode.refresh_rate > 0.0 {
+                    (current.refresh_rate - mode.refresh_rate).abs()
+                } else {
+                    -mode.refresh_rate
+                }
+            };
+            refresh_distance(*left).total_cmp(&refresh_distance(*right))
+        });
+
+        let result = if let Some((selected_mode, fingerprint)) = selected {
+            let mut config = std::ptr::null_mut();
+            let begin_status = unsafe { CGBeginDisplayConfiguration(&mut config) };
+            if begin_status != 0 || config.is_null() {
+                Err(io::Error::other(format!(
+                    "could not begin display configuration (Quartz error {begin_status})"
+                )))
+            } else {
+                let configure_status = unsafe {
+                    CGConfigureDisplayWithDisplayMode(
+                        config,
+                        display,
+                        selected_mode,
+                        std::ptr::null(),
+                    )
+                };
+                if configure_status != 0 {
+                    unsafe { CGCancelDisplayConfiguration(config) };
+                    Err(io::Error::other(format!(
+                        "could not select 1280×720 display mode (Quartz error {configure_status})"
+                    )))
+                } else {
+                    // kCGConfigureForAppOnly = 1; this mode is scoped to the
+                    // current app session and is also explicitly restored below.
+                    let complete_status = unsafe { CGCompleteDisplayConfiguration(config, 1) };
+                    if complete_status != 0 {
+                        unsafe { CGCancelDisplayConfiguration(config) };
+                        Err(io::Error::other(format!(
+                            "could not apply phone workspace mode (Quartz error {complete_status})"
+                        )))
+                    } else {
+                        Ok(fingerprint)
+                    }
+                }
+            }
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "main display does not expose a 1280×720 1× mode",
+            ))
+        };
+        unsafe { CFRelease(modes) };
+
+        match result {
+            Ok(selected) => Ok(Self {
+                display,
+                original_mode,
+                selected,
+            }),
+            Err(error) => {
+                unsafe { CFRelease(original_mode) };
+                Err(error.into())
+            }
+        }
+    }
+}
+
+impl Drop for DisplayModeGuard {
+    fn drop(&mut self) {
+        let current_display = unsafe { CGMainDisplayID() };
+        let current_mode = if current_display == self.display {
+            unsafe { CGDisplayCopyDisplayMode(self.display) }
+        } else {
+            std::ptr::null()
+        };
+        let should_restore = !current_mode.is_null()
+            && self
+                .selected
+                .matches(unsafe { ModeFingerprint::read(current_mode) });
+        if !current_mode.is_null() {
+            unsafe { CFRelease(current_mode) };
+        }
+        if should_restore {
+            let mut config = std::ptr::null_mut();
+            if unsafe { CGBeginDisplayConfiguration(&mut config) } == 0 && !config.is_null() {
+                let configured = unsafe {
+                    CGConfigureDisplayWithDisplayMode(
+                        config,
+                        self.display,
+                        self.original_mode,
+                        std::ptr::null(),
+                    )
+                };
+                if configured == 0 {
+                    if unsafe { CGCompleteDisplayConfiguration(config, 1) } != 0 {
+                        unsafe { CGCancelDisplayConfiguration(config) };
+                    }
+                } else {
+                    unsafe { CGCancelDisplayConfiguration(config) };
+                }
+            }
+        }
+        unsafe { CFRelease(self.original_mode) };
+    }
+}
+
+fn display_geometry(display: u32) -> (i32, i32, u32, u32) {
+    let bounds = unsafe { CGDisplayBounds(display) };
+    let pixel_width = u32::try_from(unsafe { CGDisplayPixelsWide(display) }).unwrap_or(1280);
+    let pixel_height = u32::try_from(unsafe { CGDisplayPixelsHigh(display) }).unwrap_or(720);
+    let width = if bounds.size.width.is_finite() && bounds.size.width >= 1.0 {
+        bounds.size.width.round() as u32
+    } else {
+        pixel_width
+    };
+    let height = if bounds.size.height.is_finite() && bounds.size.height >= 1.0 {
+        bounds.size.height.round() as u32
+    } else {
+        pixel_height
+    };
+    (
+        bounds.origin.x.round() as i32,
+        bounds.origin.y.round() as i32,
+        width.max(1),
+        height.max(1),
+    )
 }
 
 /// Asks macOS to show its standard system-owned input permission flow.

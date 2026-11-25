@@ -2,7 +2,7 @@
 
 <img src="assets/mini-remote.png" width="96" alt="Mini Remote logo">
 
-Mini Remote connects a macOS, Linux, or iOS viewer to a paired desktop on your Tailscale network. The desktop stream uses H.264. Keyboard, pointer, and optional two-way text clipboard travel through the same authenticated session.
+Mini Remote is an open-source remote desktop for macOS and Linux hosts, built in Rust. Connect from another desktop, an iPhone, or an iPad over Tailscale. It streams the desktop using H.264 and carries keyboard input, pointer input, and optional two-way text clipboard through the same authenticated session.
 
 For iPhone and iPad, see the [mobile setup guide](mobile/ios/README.md). Pair with a one-time QR code from **Setup → Pair an iPhone or iPad** in the desktop viewer.
 
@@ -49,6 +49,8 @@ Treat the host token as a password. It is stored in a user-only file on the host
 Use **Connection** in the viewer toolbar to switch or close a window on the other machine. **Ctrl+Shift+Tab** selects the next remote app, and **Ctrl+Shift+Backspace** selects the previous one. These commands work even when the local OS intercepts its own app-switching shortcut. Open **Shortcuts** in the top bar. Select a shortcut to record new keys, clear it, or use **Choose keys manually**. Use **Restore defaults** and **Save shortcuts** to restore the original bindings. Bindings are saved locally per viewer user.
 
 The default stream uses the host display’s native resolution up to 3840 × 2160. The viewer fits video to its window and keeps its aspect ratio. Choose **View → Full screen** to use the available space on your monitor. For internet connections, choose **Low data**, **Balanced**, or **Sharp** under **Connection → Stream quality** before connecting. The viewer CLI supports `--quality native|low-data|balanced|sharp`.
+
+On iPhone or iPad, connect and choose **View → Use Phone Workspace** to temporarily switch the host monitor to 1280 × 720. The desktop uses the smaller workspace so app controls are easier to reach in landscape. This works on macOS and compatible wlroots Linux desktops when the monitor offers the mode. Disconnect or select **Restore Desktop Layout** to bring back the original resolution. You can also enable Phone Workspace by default under **Edit device**. The video quality setting controls how much data the stream uses.
 
 ## Workspace and diagnostics
 

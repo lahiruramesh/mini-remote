@@ -44,6 +44,46 @@ struct OutputInfo {
     logical_height: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DisplayMode {
+    width: u32,
+    height: u32,
+    refresh_millihz: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct DisplayState {
+    mode: DisplayMode,
+    scale: f64,
+}
+
+struct DisplayRestore {
+    display: String,
+    runtime_dir: String,
+    output: String,
+    original: DisplayState,
+    temporary: DisplayState,
+}
+
+impl Drop for DisplayRestore {
+    fn drop(&mut self) {
+        let Ok(current) = read_display_state(&self.display, &self.runtime_dir, &self.output) else {
+            return;
+        };
+        if !same_display_state(current, self.temporary) {
+            return;
+        }
+        if let Err(error) = apply_display_state(
+            &self.display,
+            &self.runtime_dir,
+            &self.output,
+            self.original,
+        ) {
+            eprintln!("Could not restore display mode on {}: {error}", self.output);
+        }
+    }
+}
+
 fn read_output_info(display: &str, runtime_dir: &str) -> Result<OutputInfo, HostError> {
     let requested = std::env::var("REMOTE_DESKTOP_OUTPUT").ok();
     let result = Command::new("wlr-randr")
@@ -75,6 +115,147 @@ fn read_output_info(display: &str, runtime_dir: &str) -> Result<OutputInfo, Host
         logical_width: FALLBACK_WIDTH,
         logical_height: FALLBACK_HEIGHT,
     })
+}
+
+fn read_wlr_json(display: &str, runtime_dir: &str) -> Result<serde_json::Value, HostError> {
+    let output = Command::new("wlr-randr")
+        .arg("--json")
+        .env("WAYLAND_DISPLAY", display)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "wlr-randr --json failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+        .into());
+    }
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+fn read_display_state(
+    display: &str,
+    runtime_dir: &str,
+    output_name: &str,
+) -> Result<DisplayState, HostError> {
+    let json = read_wlr_json(display, runtime_dir)?;
+    let outputs = json.as_array().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "wlr-randr JSON must be an array",
+        )
+    })?;
+    let output = outputs
+        .iter()
+        .find(|entry| {
+            entry["enabled"].as_bool() == Some(true) && entry["name"].as_str() == Some(output_name)
+        })
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "selected output is no longer enabled",
+            )
+        })?;
+    let mode = output["modes"]
+        .as_array()
+        .and_then(|modes| {
+            modes
+                .iter()
+                .find(|mode| mode["current"].as_bool() == Some(true))
+        })
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "current output mode is missing")
+        })?;
+    let width = mode["width"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "current output width is invalid",
+            )
+        })?;
+    let height = mode["height"]
+        .as_u64()
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "current output height is invalid",
+            )
+        })?;
+    let refresh_millihz = mode["refresh"].as_f64().map(normalize_refresh);
+    let scale = output["scale"]
+        .as_f64()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(1.0);
+    Ok(DisplayState {
+        mode: DisplayMode {
+            width,
+            height,
+            refresh_millihz,
+        },
+        scale,
+    })
+}
+
+fn normalize_refresh(refresh: f64) -> f64 {
+    if refresh < 1_000.0 {
+        refresh * 1_000.0
+    } else {
+        refresh
+    }
+}
+
+fn same_display_state(left: DisplayState, right: DisplayState) -> bool {
+    left.mode.width == right.mode.width
+        && left.mode.height == right.mode.height
+        && match (left.mode.refresh_millihz, right.mode.refresh_millihz) {
+            (Some(left), Some(right)) => (left - right).abs() <= 1.0,
+            (None, None) => true,
+            _ => false,
+        }
+        && (left.scale - right.scale).abs() <= 0.001
+}
+
+fn mode_argument(mode: DisplayMode) -> String {
+    let resolution = format!("{}x{}", mode.width, mode.height);
+    let Some(refresh) = mode.refresh_millihz else {
+        return resolution;
+    };
+    let mut hz = format!("{:.3}", refresh / 1_000.0);
+    while hz.ends_with('0') {
+        hz.pop();
+    }
+    if hz.ends_with('.') {
+        hz.pop();
+    }
+    format!("{resolution}@{hz}Hz")
+}
+
+fn apply_display_state(
+    display: &str,
+    runtime_dir: &str,
+    output_name: &str,
+    state: DisplayState,
+) -> Result<(), HostError> {
+    let mode = mode_argument(state.mode);
+    let scale = state.scale.to_string();
+    let result = Command::new("wlr-randr")
+        .args(["--output", output_name, "--mode", &mode, "--scale", &scale])
+        .env("WAYLAND_DISPLAY", display)
+        .env("XDG_RUNTIME_DIR", runtime_dir)
+        .output()?;
+    if !result.status.success() {
+        return Err(io::Error::other(format!(
+            "wlr-randr could not apply {mode} at scale {scale}: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        ))
+        .into());
+    }
+    Ok(())
 }
 
 fn parse_output_info(
@@ -148,6 +329,7 @@ pub struct Host {
     runtime_dir: String,
     output: OutputInfo,
     input: WaylandInput,
+    display_restore: Option<DisplayRestore>,
 }
 
 impl Host {
@@ -189,7 +371,81 @@ impl Host {
             runtime_dir,
             output,
             input,
+            display_restore: None,
         })
+    }
+
+    /// Temporarily gives the captured Wayland output a 1280×720 workspace.
+    pub fn phone_workspace() -> Result<Self, HostError> {
+        let host = Self::new()?;
+        let output = host.output.name.as_deref().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::Unsupported, "no configurable Wayland output")
+        })?;
+        let json = read_wlr_json(&host.display, &host.runtime_dir)?;
+        let selected = json
+            .as_array()
+            .and_then(|outputs| {
+                outputs.iter().find(|entry| {
+                    entry["enabled"].as_bool() == Some(true)
+                        && entry["name"].as_str() == Some(output)
+                })
+            })
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "selected output disappeared")
+            })?;
+        if selected["transform"].as_str() != Some("normal") {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "phone workspace requires an unrotated output",
+            )
+            .into());
+        }
+        let original = read_display_state(&host.display, &host.runtime_dir, output)?;
+        let refresh = original.mode.refresh_millihz.unwrap_or(60_000.0);
+        let modes = selected["modes"].as_array().into_iter().flatten();
+        let mode = modes
+            .filter(|mode| {
+                mode["width"].as_u64() == Some(1280) && mode["height"].as_u64() == Some(720)
+            })
+            .filter_map(|mode| mode["refresh"].as_f64().map(normalize_refresh))
+            .min_by(|left, right| (left - refresh).abs().total_cmp(&(right - refresh).abs()))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::Unsupported, "output does not offer 1280×720")
+            })?;
+        let temporary = DisplayState {
+            mode: DisplayMode {
+                width: 1280,
+                height: 720,
+                refresh_millihz: Some(mode),
+            },
+            scale: 1.0,
+        };
+        let guard = DisplayRestore {
+            display: host.display.clone(),
+            runtime_dir: host.runtime_dir.clone(),
+            output: output.to_owned(),
+            original,
+            temporary,
+        };
+        if !same_display_state(original, temporary) {
+            apply_display_state(&guard.display, &guard.runtime_dir, output, temporary)?;
+        }
+        let current = read_display_state(&guard.display, &guard.runtime_dir, output)?;
+        if !same_display_state(current, temporary) {
+            return Err(
+                io::Error::other("the compositor did not select the phone workspace").into(),
+            );
+        }
+        let mut resized = Self::new()?;
+        if resized.output.name.as_deref() != Some(output)
+            || (resized.output.logical_width, resized.output.logical_height) != (1280, 720)
+        {
+            return Err(
+                io::Error::other("the phone workspace output changed before capture").into(),
+            );
+        }
+        resized.display_restore = Some(guard);
+        Ok(resized)
     }
 
     /// Starts continuous capture of the selected output, capped at UHD and encoded as

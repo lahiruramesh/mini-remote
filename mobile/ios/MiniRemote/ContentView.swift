@@ -571,6 +571,15 @@ private struct DeviceEditorSheet: View {
             }
             .pickerStyle(.navigationLink)
         }
+
+        Section {
+            Toggle("Use Phone Workspace", isOn: Binding(
+                get: { device.phoneWorkspace == true },
+                set: { device.phoneWorkspace = $0 }
+            ))
+        } footer: {
+            Text("Temporarily sets the host display to 1280 × 720. The original resolution returns when you disconnect.")
+        }
     }
 
     private func submit(connect: Bool) {
@@ -628,6 +637,7 @@ private struct RemoteDesktopScreen: View {
     @State private var trackpadCursor = CGPoint(x: 0.5, y: 0.5)
     @State private var pointerDown = false
     @State private var heldModifiers: Set<String> = []
+    @State private var confirmPhoneWorkspace = false
 
     var body: some View {
         let compact = verticalSizeClass == .compact
@@ -635,6 +645,14 @@ private struct RemoteDesktopScreen: View {
         return layout {
             if !compact { sessionHeader }
             VStack(spacing: 0) {
+                if let notice = session.layoutNotice, session.phase == .streaming {
+                    Text(notice)
+                        .font(.footnote)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(8)
+                        .background(Color(white: 0.16))
+                }
                 screenSurface
                 if session.phase == .streaming && DesktopViewport.isUltraWide(session.resolution) {
                     desktopAreaBar
@@ -664,6 +682,11 @@ private struct RemoteDesktopScreen: View {
         }
         .onChange(of: session.remoteClipboard) { _, _ in clipboardCopied = false }
         .onChange(of: session.resolution) { _, _ in updateDesktopArea() }
+        .confirmationDialog("Use Phone Workspace?", isPresented: $confirmPhoneWorkspace, titleVisibility: .visible) {
+            Button("Use Phone Workspace") { changeWorkspace(enabled: true) }
+        } message: {
+            Text("The host monitor switches to 1280 × 720 during this session. Its original resolution returns when you disconnect.")
+        }
         .onDisappear {
             endPointerDrag()
             releaseHeldModifiers()
@@ -882,6 +905,11 @@ private struct RemoteDesktopScreen: View {
             .disabled(!session.canControl)
 
             Menu {
+                if session.phoneWorkspaceActive {
+                    Button("Restore Desktop Layout", systemImage: "display") { changeWorkspace(enabled: false) }
+                } else {
+                    Button("Use Phone Workspace", systemImage: "iphone.landscape") { confirmPhoneWorkspace = true }
+                }
                 Section("Pinch to zoom. Drag with two fingers to pan.") {
                     Button("Fit Desktop", systemImage: "arrow.down.right.and.arrow.up.left") {
                         desktopArea = .overview
@@ -1013,6 +1041,14 @@ private struct RemoteDesktopScreen: View {
             zoom = 1
             viewportOffset = .zero
         }
+    }
+
+    private func changeWorkspace(enabled: Bool) {
+        endPointerDrag()
+        releaseHeldModifiers()
+        desktopArea = enabled ? .overview : .center
+        updateDesktopArea()
+        session.setPhoneWorkspace(enabled)
     }
 
     private func zoomFromCenter(by scale: CGFloat) {

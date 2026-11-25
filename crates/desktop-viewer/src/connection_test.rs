@@ -19,6 +19,7 @@ pub fn run(host: &str, port: u16, token: &str, profile: StreamProfile) -> Result
             token: token.trim().to_owned(),
             clipboard: false,
             profile,
+            phone_workspace: false,
         },
     )
     .map_err(|error| error.to_string())?;

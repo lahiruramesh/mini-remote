@@ -43,6 +43,7 @@ struct SavedDevice: Identifiable, Codable, Equatable {
     var host = ""
     var port: UInt16 = 47990
     var quality: MobileQuality = .automatic
+    var phoneWorkspace: Bool? = nil
 }
 
 @MainActor

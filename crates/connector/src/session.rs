@@ -38,12 +38,13 @@ pub fn serve(
         deadline: Instant::now() + Duration::from_secs(4),
     };
     let first_message = read_client(&mut handshake).context("read authentication")?;
-    let (candidate, clipboard, profile) = match first_message {
+    let (candidate, clipboard, profile, requested_workspace) = match first_message {
         ClientMessage::Authenticate {
             token,
             clipboard,
             profile,
-        } => (token, clipboard, profile),
+            phone_workspace,
+        } => (token, clipboard, profile, phone_workspace),
         ClientMessage::RedeemInvite { code } => {
             if !pairing::consume_invite(token_path, token, &code) {
                 return reject(
@@ -72,7 +73,19 @@ pub fn serve(
     };
     socket.set_read_timeout(Some(Duration::from_secs(20)))?;
 
-    let mut host = match Host::new() {
+    let workspace_host = if requested_workspace {
+        match Host::phone_workspace() {
+            Ok(host) => Some(host),
+            Err(error) => {
+                eprintln!("Phone workspace unavailable: {error}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let phone_workspace = workspace_host.is_some();
+    let mut host = match workspace_host.map_or_else(Host::new, Ok) {
         Ok(host) => host,
         Err(error) => return reject(&mut socket, &format!("Desktop unavailable: {error}")),
     };
@@ -88,6 +101,7 @@ pub fn serve(
         clipboard,
         source,
         profile,
+        phone_workspace,
     );
     let _ = socket.shutdown(Shutdown::Both);
     connected
@@ -119,6 +133,7 @@ fn run_session(
     clipboard_requested: bool,
     source: VideoSource,
     profile: StreamProfile,
+    phone_workspace: bool,
 ) -> Result<()> {
     let VideoSource {
         width,
@@ -151,6 +166,7 @@ fn run_session(
                 height,
                 diagnostics: true,
                 profile,
+                phone_workspace,
             },
         )?;
         write_server(
