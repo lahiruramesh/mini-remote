@@ -624,6 +624,7 @@ private struct RemoteDesktopScreen: View {
     @State private var zoom: CGFloat = 1
     @State private var viewportOffset: CGSize = .zero
     @State private var canvasSize: CGSize = .zero
+    @State private var desktopArea: WideDesktopArea? = .center
     @State private var trackpadCursor = CGPoint(x: 0.5, y: 0.5)
     @State private var pointerDown = false
     @State private var heldModifiers: Set<String> = []
@@ -633,7 +634,12 @@ private struct RemoteDesktopScreen: View {
         let layout = compact ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
         return layout {
             if !compact { sessionHeader }
-            screenSurface
+            VStack(spacing: 0) {
+                screenSurface
+                if session.phase == .streaming && DesktopViewport.isUltraWide(session.resolution) {
+                    desktopAreaBar
+                }
+            }
             sessionControls(compact: compact)
         }
         .background(Color.black.ignoresSafeArea())
@@ -657,6 +663,7 @@ private struct RemoteDesktopScreen: View {
             .presentationDragIndicator(.visible)
         }
         .onChange(of: session.remoteClipboard) { _, _ in clipboardCopied = false }
+        .onChange(of: session.resolution) { _, _ in updateDesktopArea() }
         .onDisappear {
             endPointerDrag()
             releaseHeldModifiers()
@@ -726,6 +733,7 @@ private struct RemoteDesktopScreen: View {
                         twoFingerDrag: { delta in
                             endPointerDrag()
                             if zoom > 1 {
+                                desktopArea = nil
                                 viewportOffset = viewport.clamp(
                                     CGSize(width: viewport.offset.width + delta.width,
                                            height: viewport.offset.height + delta.height)
@@ -751,7 +759,7 @@ private struct RemoteDesktopScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .onChange(of: proxy.size, initial: true) { _, size in
                 canvasSize = size
-                viewportOffset = self.viewport(in: size).offset
+                updateDesktopArea()
             }
             .overlay(alignment: .top) {
                 if session.phase == .streaming && !session.canControl {
@@ -766,6 +774,35 @@ private struct RemoteDesktopScreen: View {
             }
         }
         .clipped()
+    }
+
+    private var desktopAreaBar: some View {
+        HStack(spacing: 3) {
+            ForEach(WideDesktopArea.allCases) { area in
+                Button {
+                    endPointerDrag()
+                    desktopArea = area
+                    updateDesktopArea()
+                } label: {
+                    Text(area.title)
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .contentShape(Rectangle())
+                        .foregroundStyle(area == desktopArea ? Color.black : Color.white)
+                        .background(area == desktopArea ? Color.mint : Color.clear, in: .rect(cornerRadius: 7))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(area == .overview ? "Whole desktop" : "\(area.title) of desktop")
+                .accessibilityAddTraits(area == desktopArea ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Color(white: 0.09))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Desktop region")
     }
 
     private var phasePlaceholder: some View {
@@ -847,8 +884,8 @@ private struct RemoteDesktopScreen: View {
             Menu {
                 Section("Pinch to zoom. Drag with two fingers to pan.") {
                     Button("Fit Desktop", systemImage: "arrow.down.right.and.arrow.up.left") {
-                        zoom = 1
-                        viewportOffset = .zero
+                        desktopArea = .overview
+                        updateDesktopArea()
                     }
                     Button("Fill Screen", systemImage: "arrow.up.left.and.arrow.down.right") {
                         let fitted = viewport(in: canvasSize).fitted
@@ -957,6 +994,27 @@ private struct RemoteDesktopScreen: View {
         DesktopViewport(container: container, resolution: session.resolution, zoom: zoom, offset: viewportOffset)
     }
 
+    private func updateDesktopArea() {
+        guard let desktopArea else {
+            viewportOffset = viewport(in: canvasSize).offset
+            return
+        }
+        if let position = desktopArea.position, DesktopViewport.isUltraWide(session.resolution) {
+            let focused = DesktopViewport.focus(container: canvasSize, resolution: session.resolution, position: position)
+            zoom = focused.zoom
+            viewportOffset = focused.offset
+            let cursor = focused.location(of: trackpadCursor)
+            let visible = CGRect(origin: .zero, size: canvasSize)
+            if !visible.contains(cursor),
+               let center = focused.point(at: CGPoint(x: visible.midX, y: visible.midY), clamped: true) {
+                trackpadCursor = center
+            }
+        } else {
+            zoom = 1
+            viewportOffset = .zero
+        }
+    }
+
     private func zoomFromCenter(by scale: CGFloat) {
         resize(zoom * scale,
                anchor: CGPoint(x: canvasSize.width / 2, y: canvasSize.height / 2),
@@ -964,6 +1022,7 @@ private struct RemoteDesktopScreen: View {
     }
 
     private func resize(_ requestedZoom: CGFloat, anchor: CGPoint, in container: CGSize) {
+        desktopArea = nil
         let old = viewport(in: container)
         let updatedZoom = min(max(requestedZoom, 1), 8)
         let ratio = updatedZoom / zoom
@@ -1006,7 +1065,11 @@ private struct RemoteDesktopScreen: View {
             guard let point = viewport.point(at: next, clamped: true) else { return }
             trackpadCursor = point
             session.move(x: point.x, y: point.y)
-            viewportOffset = viewport.reveal(point)
+            let revealed = viewport.reveal(point)
+            if viewportOffset != revealed {
+                desktopArea = nil
+                viewportOffset = revealed
+            }
         }
     }
 
@@ -1096,6 +1159,30 @@ private struct RemoteDesktopScreen: View {
         case .connecting: .yellow
         case .failed: .orange
         case .idle: .gray
+        }
+    }
+}
+
+private enum WideDesktopArea: CaseIterable, Identifiable {
+    case overview, left, center, right
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .overview: "Full"
+        case .left: "Left"
+        case .center: "Center"
+        case .right: "Right"
+        }
+    }
+
+    var position: CGFloat? {
+        switch self {
+        case .overview: nil
+        case .left: 0
+        case .center: 0.5
+        case .right: 1
         }
     }
 }

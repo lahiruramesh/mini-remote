@@ -53,4 +53,17 @@ struct DesktopViewport {
         return clamp(CGSize(width: offset.width + visibleX - cursor.x,
                             height: offset.height + visibleY - cursor.y))
     }
+
+    static func isUltraWide(_ resolution: CGSize) -> Bool {
+        resolution.height > 0 && resolution.width / resolution.height >= 2.1
+    }
+
+    static func focus(container: CGSize, resolution: CGSize, position: CGFloat) -> DesktopViewport {
+        let overview = DesktopViewport(container: container, resolution: resolution, zoom: 1, offset: .zero)
+        guard overview.fitted.height > 0 else { return overview }
+        let zoom = min(3, max(1, container.height / overview.fitted.height))
+        let horizontalTravel = max(0, overview.fitted.width * zoom - container.width)
+        let offset = CGSize(width: (0.5 - position) * horizontalTravel, height: 0)
+        return DesktopViewport(container: container, resolution: resolution, zoom: zoom, offset: offset)
+    }
 }

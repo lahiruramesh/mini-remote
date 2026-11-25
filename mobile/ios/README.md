@@ -34,6 +34,8 @@ The code expires after three minutes and can be used once. Mini Remote stores th
 3. Open Mini Remote and tap **Add device**. Enter a name, the numeric Tailscale IPv4 address, port `47990`, and the pairing token. Choose whether to remember the token in the device’s Keychain. Tap **Save & Connect**. When connecting to a saved device without a remembered token, enter the token and tap **Connect**.
 4. Use **Pointer** to switch between direct touch and a virtual trackpad, right-click, or scroll. Use **View** to fit or fill the screen, or pinch to zoom and drag with two fingers to pan across the desktop. **Keyboard** opens text entry, modifiers, arrow keys, and clipboard actions. Use **Apps** to switch apps or close the active window. In landscape, the controls move to the right to give the desktop more vertical space.
 
+For an ultrawide desktop, Mini Remote opens in **Center** view. Tap **Left** or **Right** to move across the display, or **Full** to see the whole desktop. If text looks blurry when zoomed, try **Sharp** in the saved device’s quality settings.
+
 To move text between devices, enable **Share clipboard for this session** on connect and allow clipboard on the connector. In **Keyboard**, use the paste button to paste iPhone text into the focused desktop app. After copying text on the host during the session, tap **Copy from desktop** to put it on the iPhone clipboard.
 
 The viewer connects through the Tailscale tunnel interface using a numeric IPv4 address. It requires an active tunnel with a single matching interface. Access to a locked desktop follows the host connector’s OS permissions and session restrictions described in the [desktop guide](../../README.md).
